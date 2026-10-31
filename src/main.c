@@ -5,6 +5,18 @@
 #define GAME_WIDTH 640.0f
 #define GAME_HEIGHT 360.0f
 
+typedef enum PlayerState PlayerState;
+enum PlayerState {
+  IDLE,
+  RUN,
+};
+
+typedef enum PlayerDirection PlayerDirection;
+enum PlayerDirection {
+  LEFT,
+  RIGHT,
+};
+
 typedef struct AnimationState AnimationState;
 struct AnimationState {
   float duration;
@@ -12,6 +24,50 @@ struct AnimationState {
   size_t frame;
   size_t frame_count;
 };
+
+typedef struct PlayerAnimations PlayerAnimations;
+struct PlayerAnimations {
+  AnimationState idle;
+  AnimationState run;
+  AnimationState attack;
+  AnimationState jump;
+  AnimationState hurt;
+  AnimationState death;
+};
+
+typedef struct PlayerTextures PlayerTextures;
+struct PlayerTextures {
+  Texture2D idle;
+  Texture2D run;
+  Texture2D attack;
+  Texture2D jump;
+  Texture2D hurt;
+  Texture2D death;
+};
+
+typedef struct Player Player;
+struct Player {
+  Vector2 pos;
+  float velocity;
+  PlayerState state;
+  PlayerDirection direction;
+  PlayerTextures texture;
+  PlayerAnimations animation;
+};
+
+void input(float dt, Player *player) {
+  player->state = RUN;
+  if (IsKeyDown(KEY_A)) {
+    player->pos.x -= player->velocity * dt;
+    player->state = RUN;
+    player->direction = LEFT;
+  }
+  if (IsKeyDown(KEY_D)) {
+    player->pos.x += player->velocity * dt;
+    player->state = RUN;
+    player->direction = RIGHT;
+  }
+}
 
 void updateAnimationState(AnimationState *animation_state, float dt) {
   animation_state->timer += dt;
@@ -22,16 +78,57 @@ void updateAnimationState(AnimationState *animation_state, float dt) {
   }
 }
 
-void drawIdleAnimation(float dt, Texture2D idle_texture,
-                       AnimationState *animation_state, Vector2 player_pos) {
-  updateAnimationState(animation_state, dt);
+void drawIdleAnimation(float dt, Player *player) {
+  updateAnimationState(&player->animation.idle, dt);
   Rectangle rect = {
-      .x = animation_state->frame * 30,
+      .x = player->animation.idle.frame * 30,
       .y = 0,
       .width = 30,
       .height = 30,
   };
-  DrawTextureRec(idle_texture, rect, player_pos, WHITE);
+  if (player->direction == LEFT) {
+    rect.width = -rect.width;
+  }
+  DrawTextureRec(player->texture.idle, rect, player->pos, WHITE);
+}
+
+void drawRunAnimation(float dt, Player *player) {
+  updateAnimationState(&player->animation.run, dt);
+  Rectangle rect = {
+      .x = player->animation.run.frame * 30,
+      .y = 0,
+      .width = 30,
+      .height = 30,
+  };
+  if (player->direction == LEFT) {
+    rect.width = -rect.width;
+  }
+  DrawTextureRec(player->texture.run, rect, player->pos, WHITE);
+}
+
+void initPlayerTexturesAndAnimations(Player *player) {
+  player->texture.idle =
+      LoadTexture("/home/omar/Work/game_animations/assets/Seeker_Lite/"
+                  "Spritesheets/Seeker_Void_Idle_30x30_24f.png");
+  player->texture.run =
+      LoadTexture("/home/omar/Work/game_animations/assets/Seeker_Lite/"
+                  "Spritesheets/Seeker_Void_Run_30x30_10f.png");
+  player->animation.idle.duration = 0.1f;
+  player->animation.idle.frame_count = 24;
+
+  player->animation.run.duration = 0.075f;
+  player->animation.run.frame_count = 10;
+}
+
+void drawPlayer(float dt, Player *player) {
+  switch (player->state) {
+  case IDLE: {
+    drawIdleAnimation(dt, player);
+  } break;
+  case RUN: {
+    drawRunAnimation(dt, player);
+  } break;
+  }
 }
 
 int main() {
@@ -41,23 +138,21 @@ int main() {
   RenderTexture2D target = LoadRenderTexture(GAME_WIDTH, GAME_HEIGHT);
   SetTextureFilter(target.texture, TEXTURE_FILTER_POINT);
 
-  Texture2D idle_texture =
-      LoadTexture("/home/omar/Work/game_animations/assets/Seeker_Lite/"
-                  "Spritesheets/Seeker_Void_Idle_30x30_24f.png");
-  Vector2 player_pos = {
-      .x = 100,
-      .y = 100,
-  };
-  AnimationState idle_animation_state = {0};
-  idle_animation_state.duration = 0.1f;
-  idle_animation_state.frame_count = 24;
+  Player player = {0};
+  player.pos.x = 100;
+  player.pos.y = 100;
+  player.velocity = 150;
+  player.state = IDLE;
+  player.direction = RIGHT;
+  initPlayerTexturesAndAnimations(&player);
 
   float dt = 0.0f;
   while (!WindowShouldClose()) {
     dt = GetFrameTime();
+    input(dt, &player);
     BeginTextureMode(target);
-    ClearBackground(BLACK);
-    drawIdleAnimation(dt, idle_texture, &idle_animation_state, player_pos);
+    ClearBackground(WHITE);
+    drawPlayer(dt, &player);
     EndTextureMode();
 
     BeginDrawing();
@@ -69,7 +164,6 @@ int main() {
     DrawTexturePro(target.texture, src, dst, (Vector2){0, 0}, 0.0f, WHITE);
     EndDrawing();
   }
-  UnloadTexture(idle_texture);
   CloseWindow();
   return 0;
 }
