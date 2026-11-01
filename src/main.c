@@ -2,8 +2,8 @@
 #include <raylib.h>
 #include <stdio.h>
 
-#define GAME_WIDTH 640.0f
-#define GAME_HEIGHT 360.0f
+#define GAME_WIDTH 512.0f
+#define GAME_HEIGHT 288.0f
 
 typedef enum PlayerState PlayerState;
 enum PlayerState {
@@ -56,7 +56,7 @@ struct Player {
 };
 
 void input(float dt, Player *player) {
-  player->state = RUN;
+  player->state = IDLE;
   if (IsKeyDown(KEY_A)) {
     player->pos.x -= player->velocity * dt;
     player->state = RUN;
@@ -138,6 +138,9 @@ int main() {
   RenderTexture2D target = LoadRenderTexture(GAME_WIDTH, GAME_HEIGHT);
   SetTextureFilter(target.texture, TEXTURE_FILTER_POINT);
 
+  Texture2D background = LoadTexture(
+      "/home/omar/Work/game_animations/assets/riverwake/1x/01_the_bank.png");
+
   Player player = {0};
   player.pos.x = 100;
   player.pos.y = 100;
@@ -152,6 +155,7 @@ int main() {
     input(dt, &player);
     BeginTextureMode(target);
     ClearBackground(WHITE);
+    DrawTextureEx(background, (Vector2){0, 0}, 0.0f, 2.0f, WHITE);
     drawPlayer(dt, &player);
     EndTextureMode();
 
@@ -160,7 +164,9 @@ int main() {
     float scale = fminf((float)GetScreenWidth() / GAME_WIDTH,
                         (float)GetScreenHeight() / GAME_HEIGHT);
     Rectangle src = {0, 0, GAME_WIDTH, -GAME_HEIGHT};
-    Rectangle dst = {0, 0, GAME_WIDTH * scale, GAME_HEIGHT * scale};
+    Rectangle dst = {(GetScreenWidth() - GAME_WIDTH * scale) / 2.0f,
+                     (GetScreenHeight() - GAME_HEIGHT * scale) / 2.0f,
+                     GAME_WIDTH * scale, GAME_HEIGHT * scale};
     DrawTexturePro(target.texture, src, dst, (Vector2){0, 0}, 0.0f, WHITE);
     EndDrawing();
   }
