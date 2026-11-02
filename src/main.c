@@ -4,23 +4,39 @@
 
 #define GAME_WIDTH 512.0f
 #define GAME_HEIGHT 288.0f
-#define VELOCITY 150
-#define ATTACK_VELOCITY 20
+#define SPEED 150
+#define ATTACK_SPEED 20
+#define PLAYER_ID 1
+#define MAX_ENTITIES 1000
+#define GRAVITY_ACCELERATION 9.8f
+#define GRAVITY 300.0f
+#define JUMP_HEIGHT 90.0f
+#define MAX_FALL_SPEED 600.0f
 
-typedef enum PlayerState PlayerState;
-enum PlayerState {
+static size_t LAST_ENTITY_ID = 1;
+
+typedef enum EntityState EntityState;
+enum EntityState {
   IDLE,
   RUN,
   ATTACK,
   JUMP,
+  FALL,
   HURT,
   DEATH,
 };
 
-typedef enum PlayerDirection PlayerDirection;
-enum PlayerDirection {
+typedef enum Direction Direction;
+enum Direction {
   LEFT,
   RIGHT,
+};
+
+typedef enum EntityType EntityType;
+enum EntityType {
+  PLAYER,
+  ENEMY,
+  PLATFORM,
 };
 
 typedef struct AnimationState AnimationState;
@@ -35,46 +51,64 @@ struct AnimationState {
   Texture2D texture;
 };
 
-typedef struct PlayerAnimations PlayerAnimations;
-struct PlayerAnimations {
+typedef struct EntityAnimations EntityAnimations;
+struct EntityAnimations {
   AnimationState idle;
   AnimationState run;
   AnimationState attack;
   AnimationState jump;
+  AnimationState fall;
   AnimationState hurt;
   AnimationState death;
 };
 
-typedef struct Player Player;
-struct Player {
+typedef struct Entity Entity;
+struct Entity {
   Vector2 pos;
-  float velocity;
+  float speed;
+  float weight;
+  Vector2 velocity;
   Vector2 dimensions;
   Vector2 hitbox;
-  PlayerState state;
-  PlayerState prev_state;
-  PlayerDirection direction;
-  PlayerAnimations animation;
+  EntityState state;
+  EntityState prev_state;
+  Direction direction;
+  bool grounded;
+  EntityAnimations animation;
 };
 
-void input(float dt, Player *player) {
+void addEntity(Entity *entities, Entity entity) {
+  if (LAST_ENTITY_ID >= MAX_ENTITIES) {
+    return;
+  }
+  entities[LAST_ENTITY_ID] = entity;
+  LAST_ENTITY_ID++;
+}
+
+void input(float dt, Entity *player) {
   player->prev_state = player->state;
+  player->velocity.x = 0;
   player->state = IDLE;
+
+  if (IsKeyDown(KEY_E)) {
+    player->state = ATTACK;
+    player->speed = ATTACK_SPEED;
+  } else {
+    player->speed = SPEED;
+  }
+
   if (IsKeyDown(KEY_A)) {
-    player->pos.x -= player->velocity * dt;
-    player->state = RUN;
+    player->velocity.x = -player->speed;
     player->direction = LEFT;
   }
   if (IsKeyDown(KEY_D)) {
-    player->pos.x += player->velocity * dt;
-    player->state = RUN;
+    player->velocity.x = player->speed;
     player->direction = RIGHT;
   }
-  if (IsKeyDown(KEY_E)) {
-    player->state = ATTACK;
-    player->velocity = ATTACK_VELOCITY;
-  } else {
-    player->velocity = VELOCITY;
+
+  if (IsKeyPressed(KEY_SPACE) && player->grounded) {
+    player->velocity.y = -sqrtf(2.0f * GRAVITY * player->weight * JUMP_HEIGHT);
+    player->grounded = false;
   }
 
   // if (IsKeyDown(KEY_I)) {
@@ -101,25 +135,75 @@ void input(float dt, Player *player) {
   //   player->prev_state = player->state;
   //   player->state = DEATH;
   // }
+}
 
-  if (player->prev_state != player->state) {
-    player->animation.idle.timer = 0;
-    player->animation.idle.frame = 0;
+void physics(float dt, Entity *entities) {
+  Entity *player = &entities[PLAYER_ID];
+  dt = fminf(dt, 1.0f / 30.0f);
+  player->velocity.y += GRAVITY * player->weight * dt;
+  if (player->velocity.y > MAX_FALL_SPEED)
+    player->velocity.y = MAX_FALL_SPEED;
+  Vector2 dp = {
+      .x = player->velocity.x * dt,
+      .y = player->velocity.y * dt,
+  };
+  float old_x = player->pos.x;
+  Rectangle player_dimensions = {
+      .x = player->pos.x + dp.x - player->dimensions.x / 2.0f,
+      .y = player->pos.y - player->dimensions.y,
+      .width = player->dimensions.x,
+      .height = player->dimensions.y,
+  };
 
-    player->animation.run.timer = 0;
-    player->animation.run.frame = 0;
+  for (size_t i = 2; i < LAST_ENTITY_ID; ++i) {
+    Entity entity = entities[i];
+    Rectangle entity_dimensions = {
+        .x = entity.pos.x,
+        .y = entity.pos.y,
+        .width = entity.dimensions.x,
+        .height = entity.dimensions.y,
+    };
+    if (CheckCollisionRecs(player_dimensions, entity_dimensions)) {
+      if (dp.x > 0) {
+        player_dimensions.x = entity_dimensions.x - entity_dimensions.width;
+      } else if (dp.x < 0) {
+        player_dimensions.x = entity_dimensions.x + entity_dimensions.width;
+      }
+    }
+  }
+  player->pos.x = player_dimensions.x + player->dimensions.x / 2.0f;
 
-    player->animation.attack.timer = 0;
-    player->animation.attack.frame = 0;
+  player_dimensions.y = player->pos.y + dp.y - player->dimensions.y;
+  for (size_t i = 2; i < LAST_ENTITY_ID; ++i) {
+    Entity entity = entities[i];
+    Rectangle entity_dimensions = {
+        .x = entity.pos.x,
+        .y = entity.pos.y,
+        .width = entity.dimensions.x,
+        .height = entity.dimensions.y,
+    };
+    if (CheckCollisionRecs(player_dimensions, entity_dimensions)) {
+      if (dp.y > 0) {
+        player_dimensions.y = entity_dimensions.y - player_dimensions.height;
+        player->grounded = true;
+      } else if (dp.y < 0) {
+        player_dimensions.y = entity_dimensions.y + entity_dimensions.height;
+      }
+      player->velocity.y = 0;
+    }
+  }
+  player->pos.y = player_dimensions.y + player->dimensions.y;
 
-    player->animation.jump.timer = 0;
-    player->animation.jump.frame = 0;
-
-    player->animation.hurt.timer = 0;
-    player->animation.hurt.frame = 0;
-
-    player->animation.death.timer = 0;
-    player->animation.death.frame = 0;
+  if (player->state != ATTACK) {
+    if (!player->grounded) {
+      if (player->velocity.y > 0) {
+        player->state = FALL;
+      } else {
+        player->state = JUMP;
+      }
+    } else if (player->pos.x != old_x) {
+      player->state = RUN;
+    }
   }
 }
 
@@ -132,7 +216,29 @@ void updateAnimationState(AnimationState *animation_state, float dt) {
   }
 }
 
-void drawAnimation(float dt, AnimationState *animation_state, Player *player) {
+void drawAnimation(float dt, AnimationState *animation_state, Entity *entity) {
+  if (entity->prev_state != entity->state) {
+    entity->animation.idle.timer = 0;
+    entity->animation.idle.frame = 0;
+
+    entity->animation.run.timer = 0;
+    entity->animation.run.frame = 0;
+
+    entity->animation.attack.timer = 0;
+    entity->animation.attack.frame = 0;
+
+    entity->animation.jump.timer = 0;
+    entity->animation.jump.frame = 0;
+
+    entity->animation.fall.timer = 0;
+    entity->animation.fall.frame = 0;
+
+    entity->animation.hurt.timer = 0;
+    entity->animation.hurt.frame = 0;
+
+    entity->animation.death.timer = 0;
+    entity->animation.death.frame = 0;
+  }
   updateAnimationState(animation_state, dt);
   Rectangle src = {
       .x = animation_state->frame * animation_state->width,
@@ -142,46 +248,50 @@ void drawAnimation(float dt, AnimationState *animation_state, Player *player) {
   };
 
   Rectangle dst = {
-      .x = player->pos.x - animation_state->width / 2.0f +
+      .x = entity->pos.x - animation_state->width / 2.0f +
            animation_state->offset.x,
-      .y = player->pos.y - animation_state->height + animation_state->offset.y,
+      .y = entity->pos.y - animation_state->height + animation_state->offset.y,
       .width = animation_state->width,
       .height = animation_state->height,
   };
-  if (player->direction == LEFT) {
+  if (entity->direction == LEFT) {
     src.width = -src.width;
-    dst.x = player->pos.x - animation_state->width / 2.0f -
+    dst.x = entity->pos.x - animation_state->width / 2.0f -
             animation_state->offset.x;
   }
   DrawTexturePro(animation_state->texture, src, dst, (Vector2){0, 0}, 0.0f,
                  WHITE);
 }
 
-void drawIdleAnimation(float dt, Player *player) {
-  drawAnimation(dt, &player->animation.idle, player);
+void drawIdleAnimation(float dt, Entity *entity) {
+  drawAnimation(dt, &entity->animation.idle, entity);
 }
 
-void drawRunAnimation(float dt, Player *player) {
-  drawAnimation(dt, &player->animation.run, player);
+void drawRunAnimation(float dt, Entity *entity) {
+  drawAnimation(dt, &entity->animation.run, entity);
 }
 
-void drawAttackAnimation(float dt, Player *player) {
-  drawAnimation(dt, &player->animation.attack, player);
+void drawAttackAnimation(float dt, Entity *entity) {
+  drawAnimation(dt, &entity->animation.attack, entity);
 }
 
-void drawJumpAnimation(float dt, Player *player) {
-  drawAnimation(dt, &player->animation.jump, player);
+void drawJumpAnimation(float dt, Entity *entity) {
+  drawAnimation(dt, &entity->animation.jump, entity);
 }
 
-void drawHurtAnimation(float dt, Player *player) {
-  drawAnimation(dt, &player->animation.hurt, player);
+void drawFallAnimation(float dt, Entity *entity) {
+  drawAnimation(dt, &entity->animation.fall, entity);
 }
 
-void drawDeathAnimation(float dt, Player *player) {
-  drawAnimation(dt, &player->animation.death, player);
+void drawHurtAnimation(float dt, Entity *entity) {
+  drawAnimation(dt, &entity->animation.hurt, entity);
 }
 
-void initPlayerTexturesAndAnimations(Player *player) {
+void drawDeathAnimation(float dt, Entity *entity) {
+  drawAnimation(dt, &entity->animation.death, entity);
+}
+
+void initPlayerTexturesAndAnimations(Entity *player) {
   player->animation.idle.texture =
       LoadTexture("/home/omar/Work/game_animations/assets/Seeker_Lite/"
                   "Spritesheets/Seeker_Void_Idle_30x30_24f.png");
@@ -196,6 +306,10 @@ void initPlayerTexturesAndAnimations(Player *player) {
   player->animation.jump.texture =
       LoadTexture("/home/omar/Work/game_animations/assets/Seeker_Lite/"
                   "Spritesheets/Seeker_Void_JumpFall_30x30_28f.png");
+
+  player->animation.fall.texture =
+      LoadTexture("/home/omar/Work/game_animations/assets/Seeker_Lite/"
+                  "Spritesheets/Seeker_Void_Fall_30x30_14f.png");
 
   player->animation.hurt.texture =
       LoadTexture("/home/omar/Work/game_animations/assets/Seeker_Lite/"
@@ -223,9 +337,14 @@ void initPlayerTexturesAndAnimations(Player *player) {
   player->animation.attack.offset.x = 28;
 
   player->animation.jump.duration = 0.075f;
-  player->animation.jump.frame_count = 28;
+  player->animation.jump.frame_count = 14;
   player->animation.jump.width = 30;
   player->animation.jump.height = 30;
+
+  player->animation.fall.duration = 0.075f;
+  player->animation.fall.frame_count = 14;
+  player->animation.fall.width = 30;
+  player->animation.fall.height = 30;
 
   player->animation.hurt.duration = 0.075f;
   player->animation.hurt.frame_count = 9;
@@ -239,7 +358,7 @@ void initPlayerTexturesAndAnimations(Player *player) {
   player->animation.death.height = 50;
 }
 
-void drawPlayer(float dt, Player *player) {
+void drawPlayer(float dt, Entity *player) {
 
   Rectangle interactbox = {
       .x = player->pos.x - player->dimensions.x / 2.0f,
@@ -268,6 +387,9 @@ void drawPlayer(float dt, Player *player) {
   case JUMP: {
     drawJumpAnimation(dt, player);
   } break;
+  case FALL: {
+    drawFallAnimation(dt, player);
+  } break;
   case HURT: {
     drawHurtAnimation(dt, player);
   } break;
@@ -284,29 +406,93 @@ int main() {
   RenderTexture2D target = LoadRenderTexture(GAME_WIDTH, GAME_HEIGHT);
   SetTextureFilter(target.texture, TEXTURE_FILTER_POINT);
 
-  Texture2D background = LoadTexture(
-      "/home/omar/Work/game_animations/assets/riverwake/1x/01_the_bank.png");
+  Texture2D background = LoadTexture("/home/omar/Work/game_animations/"
+                                     "assets/riverwake/1x/01_the_bank.png");
 
-  Player player = {0};
-  player.pos.x = 100;
+  Entity entities[MAX_ENTITIES] = {0};
+
+  Entity player = {0};
+  player.pos.x = 20;
   player.pos.y = 100;
-  player.velocity = VELOCITY;
+  player.speed = SPEED;
+  player.weight = 3;
   player.dimensions.x = 25;
   player.dimensions.y = 30;
   player.hitbox.x = 15;
   player.hitbox.y = 25;
   player.state = IDLE;
   player.direction = LEFT;
+  player.grounded = false;
   initPlayerTexturesAndAnimations(&player);
 
+  Entity ground = {0};
+  ground.pos.x = 0;
+  ground.pos.y = 200;
+  ground.dimensions.x = GAME_WIDTH;
+  ground.dimensions.y = 50;
+
+  addEntity(entities, player);
+  addEntity(entities, ground);
+
+  Camera2D camera = {0};
+  camera.target = (Vector2){player.pos.x + 20.0f, player.pos.y + 20.0f};
+  camera.offset = (Vector2){GetRenderWidth() / 2.0f, GetRenderHeight() / 2.0f};
+  camera.rotation = 0.0f;
+  camera.zoom = 1.0f;
+
   float dt = 0.0f;
+  char info_buffer[1000];
+
   while (!WindowShouldClose()) {
     dt = GetFrameTime();
-    input(dt, &player);
+    camera.target = (Vector2){
+        entities[PLAYER_ID].pos.x + 20,
+        entities[PLAYER_ID].pos.y + 20,
+    };
+    input(dt, &entities[PLAYER_ID]);
+    physics(dt, entities);
     BeginTextureMode(target);
     ClearBackground(WHITE);
+
     DrawTextureEx(background, (Vector2){0, 0}, 0.0f, 2.0f, WHITE);
-    drawPlayer(dt, &player);
+    snprintf(info_buffer, sizeof(info_buffer), "player: pos{x:%.2f,y:%.2f}",
+             entities[PLAYER_ID].pos.x, entities[PLAYER_ID].pos.y);
+    DrawText(info_buffer, 2, 2, 8, RAYWHITE);
+    switch (entities[PLAYER_ID].state) {
+    case IDLE: {
+      snprintf(info_buffer, sizeof(info_buffer), "player State :IDLE");
+    } break;
+    case RUN: {
+      snprintf(info_buffer, sizeof(info_buffer), "player State :RUN");
+    } break;
+    case ATTACK: {
+      snprintf(info_buffer, sizeof(info_buffer), "player State :ATTACK");
+    } break;
+    case JUMP: {
+      snprintf(info_buffer, sizeof(info_buffer), "player State :JUMP");
+    } break;
+    case FALL: {
+      snprintf(info_buffer, sizeof(info_buffer), "player State :FALL");
+    } break;
+    case HURT: {
+      snprintf(info_buffer, sizeof(info_buffer), "player State :HURT");
+    } break;
+    case DEATH: {
+      snprintf(info_buffer, sizeof(info_buffer), "player State :DEATH");
+    } break;
+    }
+    DrawText(info_buffer, 2, 10, 8, RAYWHITE);
+    BeginMode2D(camera);
+    drawPlayer(dt, &entities[PLAYER_ID]);
+    DrawRectangleLinesEx(
+        (Rectangle){
+            .x = ground.pos.x,
+            .y = ground.pos.y,
+            .width = ground.dimensions.x,
+            .height = ground.dimensions.y,
+        },
+        1.0f, RED);
+    EndMode2D();
     EndTextureMode();
 
     BeginDrawing();
