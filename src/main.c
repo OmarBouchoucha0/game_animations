@@ -5,13 +5,13 @@
 #define GAME_WIDTH 512.0f
 #define GAME_HEIGHT 288.0f
 #define SPEED 150
-#define ATTACK_SPEED 20
 #define PLAYER_ID 1
 #define MAX_ENTITIES 1000
 #define GRAVITY_ACCELERATION 9.8f
 #define GRAVITY 300.0f
 #define JUMP_HEIGHT 90.0f
 #define MAX_FALL_SPEED 600.0f
+#define ATTACK_RANGE 55.0f
 
 static size_t LAST_ENTITY_ID = 1;
 
@@ -37,6 +37,7 @@ enum EntityType {
   PLAYER,
   ENEMY,
   PLATFORM,
+  NONE,
 };
 
 typedef struct AnimationState AnimationState;
@@ -67,13 +68,18 @@ struct Entity {
   Vector2 pos;
   float speed;
   float weight;
+  float attack_range;
+  float health;
+  float damage;
   Vector2 velocity;
   Vector2 dimensions;
   Vector2 hitbox;
   EntityState state;
   EntityState prev_state;
   Direction direction;
+  EntityType entity_type;
   bool grounded;
+  bool invurnable;
   EntityAnimations animation;
 };
 
@@ -88,15 +94,10 @@ void addEntity(Entity *entities, Entity entity) {
 void input(float dt, Entity *player) {
   player->prev_state = player->state;
   player->velocity.x = 0;
-  player->state = IDLE;
 
   if (IsKeyDown(KEY_E)) {
     player->state = ATTACK;
-    player->speed = ATTACK_SPEED;
-  } else {
-    player->speed = SPEED;
   }
-
   if (IsKeyDown(KEY_A)) {
     player->velocity.x = -player->speed;
     player->direction = LEFT;
@@ -110,35 +111,13 @@ void input(float dt, Entity *player) {
     player->velocity.y = -sqrtf(2.0f * GRAVITY * player->weight * JUMP_HEIGHT);
     player->grounded = false;
   }
-
-  // if (IsKeyDown(KEY_I)) {
-  //   player->prev_state = player->state;
-  //   player->state = IDLE;
-  // }
-  // if (IsKeyDown(KEY_R)) {
-  //   player->prev_state = player->state;
-  //   player->state = RUN;
-  // }
-  // if (IsKeyDown(KEY_Q)) {
-  //   player->prev_state = player->state;
-  //   player->state = ATTACK;
-  // }
-  // if (IsKeyDown(KEY_J)) {
-  //   player->prev_state = player->state;
-  //   player->state = JUMP;
-  // }
-  // if (IsKeyDown(KEY_H)) {
-  //   player->prev_state = player->state;
-  //   player->state = HURT;
-  // }
-  // if (IsKeyDown(KEY_D)) {
-  //   player->prev_state = player->state;
-  //   player->state = DEATH;
-  // }
 }
 
-void physics(float dt, Entity *entities) {
-  Entity *player = &entities[PLAYER_ID];
+void updateVelocity(float dt, Entity *entities, size_t id) {
+  Entity *player = &entities[id];
+  if (player->state == RUN || player->state == JUMP || player->state == FALL) {
+    player->state = IDLE;
+  }
   dt = fminf(dt, 1.0f / 30.0f);
   player->velocity.y += GRAVITY * player->weight * dt;
   if (player->velocity.y > MAX_FALL_SPEED)
@@ -149,50 +128,76 @@ void physics(float dt, Entity *entities) {
   };
   float old_x = player->pos.x;
   Rectangle player_dimensions = {
-      .x = player->pos.x + dp.x - player->dimensions.x / 2.0f,
-      .y = player->pos.y - player->dimensions.y,
-      .width = player->dimensions.x,
-      .height = player->dimensions.y,
+      .x = player->pos.x + dp.x - player->hitbox.x / 2.0f,
+      .y = player->pos.y - player->hitbox.y,
+      .width = player->hitbox.x,
+      .height = player->hitbox.y,
   };
 
-  for (size_t i = 2; i < LAST_ENTITY_ID; ++i) {
-    Entity entity = entities[i];
-    Rectangle entity_dimensions = {
-        .x = entity.pos.x,
-        .y = entity.pos.y,
-        .width = entity.dimensions.x,
-        .height = entity.dimensions.y,
-    };
-    if (CheckCollisionRecs(player_dimensions, entity_dimensions)) {
-      if (dp.x > 0) {
-        player_dimensions.x = entity_dimensions.x - entity_dimensions.width;
-      } else if (dp.x < 0) {
-        player_dimensions.x = entity_dimensions.x + entity_dimensions.width;
+  for (size_t i = 1; i < LAST_ENTITY_ID; ++i) {
+    if (i != id) {
+      Entity entity = entities[i];
+      if (entity.entity_type == NONE) {
+        continue;
+      }
+      Rectangle entity_dimensions = {0};
+      if (entity.entity_type == PLATFORM) {
+        entity_dimensions.x = entity.pos.x;
+        entity_dimensions.y = entity.pos.y;
+        entity_dimensions.width = entity.dimensions.x;
+        entity_dimensions.height = entity.dimensions.y;
+      }
+      if (entity.entity_type == ENEMY) {
+        entity_dimensions.x = entity.pos.x - entity.hitbox.x / 2;
+        entity_dimensions.y = entity.pos.y - entity.hitbox.y;
+        entity_dimensions.width = entity.hitbox.x;
+        entity_dimensions.height = entity.hitbox.y;
+      }
+      if (CheckCollisionRecs(player_dimensions, entity_dimensions)) {
+        if (dp.x > 0) {
+          player_dimensions.x = entity_dimensions.x - entity_dimensions.width;
+        } else if (dp.x < 0) {
+          player_dimensions.x = entity_dimensions.x + entity_dimensions.width;
+        }
       }
     }
   }
-  player->pos.x = player_dimensions.x + player->dimensions.x / 2.0f;
+  player->pos.x = player_dimensions.x + player->hitbox.x / 2.0f;
 
-  player_dimensions.y = player->pos.y + dp.y - player->dimensions.y;
-  for (size_t i = 2; i < LAST_ENTITY_ID; ++i) {
-    Entity entity = entities[i];
-    Rectangle entity_dimensions = {
-        .x = entity.pos.x,
-        .y = entity.pos.y,
-        .width = entity.dimensions.x,
-        .height = entity.dimensions.y,
-    };
-    if (CheckCollisionRecs(player_dimensions, entity_dimensions)) {
-      if (dp.y > 0) {
-        player_dimensions.y = entity_dimensions.y - player_dimensions.height;
-        player->grounded = true;
-      } else if (dp.y < 0) {
-        player_dimensions.y = entity_dimensions.y + entity_dimensions.height;
+  player_dimensions.y = player->pos.y + dp.y - player->hitbox.y;
+  for (size_t i = 1; i < LAST_ENTITY_ID; ++i) {
+    if (i != id) {
+      Entity entity = entities[i];
+
+      if (entity.entity_type == NONE) {
+        continue;
       }
-      player->velocity.y = 0;
+
+      Rectangle entity_dimensions = {0};
+      if (entity.entity_type == PLATFORM) {
+        entity_dimensions.x = entity.pos.x;
+        entity_dimensions.y = entity.pos.y;
+        entity_dimensions.width = entity.dimensions.x;
+        entity_dimensions.height = entity.dimensions.y;
+      }
+      if (entity.entity_type == ENEMY) {
+        entity_dimensions.x = entity.pos.x - entity.hitbox.x / 2;
+        entity_dimensions.y = entity.pos.y - entity.hitbox.y;
+        entity_dimensions.width = entity.hitbox.x;
+        entity_dimensions.height = entity.hitbox.y;
+      }
+      if (CheckCollisionRecs(player_dimensions, entity_dimensions)) {
+        if (dp.y > 0) {
+          player_dimensions.y = entity_dimensions.y - player_dimensions.height;
+          player->grounded = true;
+        } else if (dp.y < 0) {
+          player_dimensions.y = entity_dimensions.y + entity_dimensions.height;
+        }
+        player->velocity.y = 0;
+      }
     }
   }
-  player->pos.y = player_dimensions.y + player->dimensions.y;
+  player->pos.y = player_dimensions.y + player->hitbox.y;
 
   if (player->state != ATTACK) {
     if (!player->grounded) {
@@ -205,6 +210,82 @@ void physics(float dt, Entity *entities) {
       player->state = RUN;
     }
   }
+}
+
+void playerAttackCollision(Entity *entities) {
+  Entity *player = &entities[PLAYER_ID];
+  if (player->state != ATTACK) {
+    return;
+  }
+  Rectangle attack_box = {
+      .x = player->pos.x + player->dimensions.x / 2.0f,
+      .y = player->pos.y - player->dimensions.y,
+      .width = player->attack_range,
+      .height = player->dimensions.y,
+  };
+  if (player->direction == LEFT) {
+    attack_box.x =
+        player->pos.x - player->dimensions.x / 2.0f - player->attack_range;
+    attack_box.y = player->pos.y - player->dimensions.y;
+  }
+  for (size_t i = 2; i < LAST_ENTITY_ID; ++i) {
+    Entity *entity = &entities[i];
+    if (entity->entity_type == ENEMY) {
+      Rectangle hitbox = {
+          .x = entity->pos.x - entity->hitbox.x / 2.0f,
+          .y = entity->pos.y - entity->hitbox.y,
+          .width = entity->hitbox.x,
+          .height = entity->hitbox.y,
+      };
+      if (CheckCollisionRecs(attack_box, hitbox)) {
+        if (entity->invurnable == false) {
+          entity->health -= player->damage;
+          if (entity->health <= 0) {
+            entity->state = DEATH;
+            entity->prev_state = entity->state;
+          } else {
+            entity->state = HURT;
+            entity->prev_state = entity->state;
+          }
+          entity->invurnable = true;
+        }
+      }
+    }
+  }
+}
+
+void resetState(Entity *entities) {
+  for (size_t i = 1; i < LAST_ENTITY_ID; ++i) {
+    Entity *entity = &entities[i];
+    if (entity->entity_type == PLAYER || entity->entity_type == ENEMY) {
+      if (entity->animation.attack.frame >=
+          entity->animation.attack.frame_count - 1) {
+        entity->prev_state = entity->state;
+        entity->state = IDLE;
+      }
+      if (entity->animation.hurt.frame >=
+          entity->animation.hurt.frame_count - 1) {
+        entity->prev_state = entity->state;
+        entity->state = IDLE;
+        entity->invurnable = false;
+      }
+      if (entity->animation.death.frame >=
+          entity->animation.death.frame_count - 1) {
+        *entity = entities[0];
+      }
+    }
+  }
+}
+
+void physics(float dt, Entity *entities) {
+  resetState(entities);
+  for (size_t i = 1; i < LAST_ENTITY_ID; ++i) {
+    Entity entity = entities[i];
+    if (entity.entity_type == PLAYER || entity.entity_type == ENEMY) {
+      updateVelocity(dt, entities, i);
+    }
+  }
+  playerAttackCollision(entities);
 }
 
 void updateAnimationState(AnimationState *animation_state, float dt) {
@@ -259,8 +340,13 @@ void drawAnimation(float dt, AnimationState *animation_state, Entity *entity) {
     dst.x = entity->pos.x - animation_state->width / 2.0f -
             animation_state->offset.x;
   }
-  DrawTexturePro(animation_state->texture, src, dst, (Vector2){0, 0}, 0.0f,
-                 WHITE);
+  if (entity->entity_type == PLAYER) {
+    DrawTexturePro(animation_state->texture, src, dst, (Vector2){0, 0}, 0.0f,
+                   WHITE);
+  } else {
+    DrawTexturePro(animation_state->texture, src, dst, (Vector2){0, 0}, 0.0f,
+                   GREEN);
+  }
 }
 
 void drawIdleAnimation(float dt, Entity *entity) {
@@ -329,7 +415,7 @@ void initPlayerTexturesAndAnimations(Entity *player) {
   player->animation.run.width = 30;
   player->animation.run.height = 30;
 
-  player->animation.attack.duration = 0.075f;
+  player->animation.attack.duration = 0.05f;
   player->animation.attack.frame_count = 8;
   player->animation.attack.width = 90;
   player->animation.attack.height = 50;
@@ -372,8 +458,23 @@ void drawPlayer(float dt, Entity *player) {
       .width = player->hitbox.x,
       .height = player->hitbox.y,
   };
+
+  Rectangle attack_box = {
+      .x = player->pos.x + player->dimensions.x / 2.0f,
+      .y = player->pos.y - player->dimensions.y,
+      .width = player->attack_range,
+      .height = player->dimensions.y,
+  };
   DrawRectangleLinesEx(interactbox, 1.0f, BLUE);
   DrawRectangleLinesEx(hitbox, 1.0f, RED);
+
+  char info_buffer[1000];
+
+  snprintf(info_buffer, sizeof(info_buffer), "hp : %.0f", player->health);
+  int text_width = MeasureText(info_buffer, 4);
+  DrawText(info_buffer, player->pos.x - text_width / 2,
+           player->pos.y - player->dimensions.y - 8, 4, RAYWHITE);
+
   switch (player->state) {
   case IDLE: {
     drawIdleAnimation(dt, player);
@@ -382,6 +483,12 @@ void drawPlayer(float dt, Entity *player) {
     drawRunAnimation(dt, player);
   } break;
   case ATTACK: {
+    if (player->direction == LEFT) {
+      attack_box.x =
+          player->pos.x - player->dimensions.x / 2.0f - player->attack_range;
+      attack_box.y = player->pos.y - player->dimensions.y;
+    }
+    DrawRectangleLinesEx(attack_box, 1.0f, GREEN);
     drawAttackAnimation(dt, player);
   } break;
   case JUMP: {
@@ -399,6 +506,27 @@ void drawPlayer(float dt, Entity *player) {
   }
 }
 
+void drawEnemies(float dt, Entity *entities) {
+  for (size_t i = 1; i < LAST_ENTITY_ID; ++i) {
+    if (entities[i].entity_type == ENEMY) {
+      drawPlayer(dt, &entities[i]);
+    }
+  }
+}
+
+void spawnEnemy(Entity *entities, Entity enemy) {
+
+  int enemy_count = 0;
+  for (size_t i = 1; i < LAST_ENTITY_ID; ++i) {
+    if (entities[i].entity_type == ENEMY) {
+      enemy_count++;
+    }
+  }
+  if (enemy_count <= 0) {
+    addEntity(entities, enemy);
+  }
+}
+
 int main() {
   SetConfigFlags(FLAG_WINDOW_RESIZABLE);
   InitWindow(GAME_WIDTH, GAME_HEIGHT, "animations");
@@ -410,12 +538,18 @@ int main() {
                                      "assets/riverwake/1x/01_the_bank.png");
 
   Entity entities[MAX_ENTITIES] = {0};
+  Entity none = {0};
+  none.entity_type = NONE;
+  entities[0] = none;
 
   Entity player = {0};
   player.pos.x = 20;
   player.pos.y = 100;
   player.speed = SPEED;
+  player.attack_range = ATTACK_RANGE;
   player.weight = 3;
+  player.health = 10;
+  player.damage = 2;
   player.dimensions.x = 25;
   player.dimensions.y = 30;
   player.hitbox.x = 15;
@@ -423,6 +557,7 @@ int main() {
   player.state = IDLE;
   player.direction = LEFT;
   player.grounded = false;
+  player.entity_type = PLAYER;
   initPlayerTexturesAndAnimations(&player);
 
   Entity ground = {0};
@@ -430,6 +565,23 @@ int main() {
   ground.pos.y = 200;
   ground.dimensions.x = GAME_WIDTH;
   ground.dimensions.y = 50;
+  ground.entity_type = PLATFORM;
+
+  Entity enemy = {0};
+  enemy.pos.x = 100;
+  enemy.pos.y = 100;
+  enemy.speed = SPEED;
+  enemy.weight = 3;
+  enemy.health = 5;
+  enemy.damage = 1;
+  enemy.hitbox.x = 15;
+  enemy.hitbox.y = 25;
+  enemy.dimensions.x = 25;
+  enemy.dimensions.y = 30;
+  enemy.entity_type = ENEMY;
+  enemy.state = IDLE;
+  enemy.prev_state = IDLE;
+  initPlayerTexturesAndAnimations(&enemy);
 
   addEntity(entities, player);
   addEntity(entities, ground);
@@ -449,6 +601,8 @@ int main() {
         entities[PLAYER_ID].pos.x + 20,
         entities[PLAYER_ID].pos.y + 20,
     };
+
+    spawnEnemy(entities, enemy);
     input(dt, &entities[PLAYER_ID]);
     physics(dt, entities);
     BeginTextureMode(target);
@@ -482,8 +636,38 @@ int main() {
     } break;
     }
     DrawText(info_buffer, 2, 10, 8, RAYWHITE);
+
+    snprintf(info_buffer, sizeof(info_buffer), "enemy: pos{x:%.2f,y:%.2f}",
+             entities[3].pos.x, entities[3].pos.y);
+    DrawText(info_buffer, 2, 20, 8, RAYWHITE);
+    switch (entities[3].state) {
+    case IDLE: {
+      snprintf(info_buffer, sizeof(info_buffer), "enemy State :IDLE");
+    } break;
+    case RUN: {
+      snprintf(info_buffer, sizeof(info_buffer), "enemy State :RUN");
+    } break;
+    case ATTACK: {
+      snprintf(info_buffer, sizeof(info_buffer), "enemy State :ATTACK");
+    } break;
+    case JUMP: {
+      snprintf(info_buffer, sizeof(info_buffer), "enemy State :JUMP");
+    } break;
+    case FALL: {
+      snprintf(info_buffer, sizeof(info_buffer), "enemy State :FALL");
+    } break;
+    case HURT: {
+      snprintf(info_buffer, sizeof(info_buffer), "enemy State :HURT");
+    } break;
+    case DEATH: {
+      snprintf(info_buffer, sizeof(info_buffer), "enemy State :DEATH");
+    } break;
+    }
+    DrawText(info_buffer, 2, 28, 8, RAYWHITE);
+
     BeginMode2D(camera);
     drawPlayer(dt, &entities[PLAYER_ID]);
+    drawEnemies(dt, entities);
     DrawRectangleLinesEx(
         (Rectangle){
             .x = ground.pos.x,

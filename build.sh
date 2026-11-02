@@ -1,3 +1,3 @@
 #!/bin/sh
 
-gcc src/main.c -o out/app -g -lraylib -lGL -lm -lpthread -ldl -lrt -lX11
+gcc src/main.c -o out/app -Wall -g -lraylib -lGL -lm -lpthread -ldl -lrt -lX11
